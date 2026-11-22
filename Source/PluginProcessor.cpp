@@ -37,7 +37,8 @@ void ElevateAudioProcessor::prepareToPlay(double sampleRate, int)
     chorus.prepare(sampleRate);
     modFx.prepare(sampleRate);
     spaceFx.prepare(sampleRate);
-    sequencer.reset();
+    sequencers[0].reset(); sequencers[1].reset();
+    modStep = modCur = 0.0f;
 }
 
 //==============================================================================
@@ -61,26 +62,61 @@ void ElevateAudioProcessor::readEngineParams()
     p.mode = vi(ID::mode); p.legato = vb(ID::legato); p.detune = v(ID::detune); p.bend = v(ID::bend);
     p.modDest = vi(ID::modDest); p.modAmt = v(ID::modAmt); p.glide = v(ID::glide);
     p.tune = v(ID::tune); p.volume = v(ID::volume);
+    p.o1Uni = vi(ID::o1Uni); p.o1UniDet = v(ID::o1UniDet);
+    p.o2Uni = vi(ID::o2Uni); p.o2UniDet = v(ID::o2UniDet);
 }
 
-void ElevateAudioProcessor::readSequencerSnapshot()
+void ElevateAudioProcessor::readSeqSnapshot(Sequencer::Snapshot& s, int n)
 {
-    auto& s = seqSnap;
-    s.on = vb(ID::seqOn); s.retrig = vb(ID::seqRetrig);
-    s.rateIdx = vi(ID::seqRate); s.dir = vi(ID::seqDir);
-    s.swing = v(ID::seqSwing); s.gateScale = v(ID::seqGate);
+    s.on = vb(ID::sq(n, ID::seqOn)); s.retrig = vb(ID::sq(n, ID::seqRetrig));
+    s.rateIdx = vi(ID::sq(n, ID::seqRate)); s.dir = vi(ID::sq(n, ID::seqDir));
+    s.swing = v(ID::sq(n, ID::seqSwing)); s.gateScale = v(ID::sq(n, ID::seqGate));
     if (! s.on) return;                                  // step data is only needed while running
-    const bool link = vb(ID::seqLink);
-    s.len[0] = vi(ID::seqLenG);
-    s.len[1] = link ? s.len[0] : vi(ID::seqLenP);
-    s.len[2] = link ? s.len[0] : vi(ID::seqLenV);
+    const bool link = vb(ID::sq(n, ID::seqLink));
+    s.len[0] = vi(ID::sq(n, ID::seqLenG));
+    s.len[1] = link ? s.len[0] : vi(ID::sq(n, ID::seqLenP));
+    s.len[2] = link ? s.len[0] : vi(ID::sq(n, ID::seqLenV));
     for (int i = 0; i < Sequencer::numSteps; ++i)
     {
-        s.stepOn[0][i] = vb(ID::stepOn('g', i)); s.val[0][i] = v(ID::stepVal('g', i));
-        s.stepOn[1][i] = vb(ID::stepOn('p', i)); s.val[1][i] = v(ID::stepVal('p', i)); s.oct[i] = vi(ID::stepOct(i));
-        s.stepOn[2][i] = vb(ID::stepOn('v', i)); s.val[2][i] = v(ID::stepVal('v', i));
-        s.val[1][i] = std::round(s.val[1][i]);
+        s.stepOn[0][i] = vb(ID::stepOn('g', i, n)); s.val[0][i] = v(ID::stepVal('g', i, n));
+        s.stepOn[1][i] = vb(ID::stepOn('p', i, n)); s.val[1][i] = std::round(v(ID::stepVal('p', i, n)));
+        s.oct[i] = vi(ID::stepOct(i, n));
+        s.stepOn[2][i] = vb(ID::stepOn('v', i, n)); s.val[2][i] = v(ID::stepVal('v', i, n));
     }
+}
+
+// Picks up a changed Sequencer 2 destination and caches its parameter objects.
+void ElevateAudioProcessor::updateModDest()
+{
+    const int d = (int) std::lround(apvts.getRawParameterValue(ID::seq2Dest)->load());
+    if (d == modDestIdx) return;
+    modDestIdx = d; modCur = 0.0f; modStep = 0.0f;
+    const auto& ids = ID::destIds();
+    if (d > 0 && d <= ids.size())
+    {
+        modParam = apvts.getParameter(ids[d - 1]);
+        modRaw = apvts.getRawParameterValue(ids[d - 1]);
+    }
+    else { modParam = nullptr; modRaw = nullptr; }
+}
+
+// Slews the modulation offset toward (step level x amount) over numSamples.
+void ElevateAudioProcessor::stepMod(int numSamples)
+{
+    if (modParam == nullptr) return;
+    const float amt = apvts.getRawParameterValue(ID::seq2Amt)->load();
+    const float slew = apvts.getRawParameterValue(ID::seq2Slew)->load();
+    const float sec = slew * slew * 0.5f;
+    const float coef = sec < 0.0005f ? 1.0f : 1.0f - std::exp(-(float) numSamples / (sec * (float) sr));
+    modCur += (modStep * amt - modCur) * coef;
+}
+
+void ElevateAudioProcessor::processSeg(float* out, int len)
+{
+    if (len <= 0) return;
+    if (modParam != nullptr) readEngineParams();         // modulation changes between segments
+    engine.process(out, len, engineParams, bpm);
+    stepMod(len);
 }
 
 void ElevateAudioProcessor::setParam(const juce::String& id, float normalised)
@@ -108,18 +144,35 @@ void ElevateAudioProcessor::renderSegment(float* out, int len, double ppq)
 {
     if (len <= 0) return;
     seqEvents.clear();
-    sequencer.process(len, bpm, sr, hostPlaying, ppq, engine.anyKeyHeld(), seqSnap,
-        [this](int off, Sequencer::Ev t, int semis, float vel, bool leg)
-        { if (seqEvents.size() < seqEvents.capacity()) seqEvents.push_back({ off, t, semis, vel, leg }); });
+    auto collect = [this](int which)
+    {
+        return [this, which](int off, Sequencer::Ev t, int semis, float vel, bool leg)
+        { if (seqEvents.size() < seqEvents.capacity()) seqEvents.push_back({ off, t, semis, vel, leg, which }); };
+    };
+    for (int n = 0; n < 2; ++n)
+        sequencers[n].process(len, bpm, sr, hostPlaying, ppq, engine.anyKeyHeld(), seqSnaps[n], collect(n));
+
+    // Stable insertion sort by offset (no allocation; keeps NoteOff before NoteOn at equal offsets).
+    for (size_t i = 1; i < seqEvents.size(); ++i)
+        for (size_t j = i; j > 0 && seqEvents[j - 1].offset > seqEvents[j].offset; --j)
+            std::swap(seqEvents[j - 1], seqEvents[j]);
 
     int pos = 0;
     for (auto& e : seqEvents)
     {
-        if (e.offset > pos) { engine.process(out + pos, e.offset - pos, engineParams, bpm); pos = e.offset; }
-        if (e.type == Sequencer::Ev::NoteOn) engine.seqNoteOn(e.semis, e.vel, e.legato);
-        else                                 engine.seqNoteOff();
+        if (e.offset > pos) { processSeg(out + pos, e.offset - pos); pos = e.offset; }
+        if (e.which == 0)
+        {
+            if (e.type == Sequencer::Ev::NoteOn) engine.seqNoteOn(e.semis, e.vel, e.legato);
+            else                                 engine.seqNoteOff();
+        }
+        else   // Sequencer 2: pitch lane = bipolar level (12 semitones = full scale), velocity lane = depth
+        {
+            modStep = e.type == Sequencer::Ev::NoteOn
+                          ? juce::jlimit(-1.0f, 1.0f, (float) e.semis / 12.0f) * e.vel : 0.0f;
+        }
     }
-    if (pos < len) engine.process(out + pos, len - pos, engineParams, bpm);
+    processSeg(out + pos, len - pos);
 }
 
 void ElevateAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -140,8 +193,10 @@ void ElevateAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         }
 
     readEngineParams();
-    readSequencerSnapshot();
-    engine.setSequencerActive(seqSnap.on);
+    updateModDest();
+    readSeqSnapshot(seqSnaps[0], 0);
+    readSeqSnapshot(seqSnaps[1], 1);
+    engine.setSequencerActive(seqSnaps[0].on);
 
     float* left = buffer.getWritePointer(0);
     const double beatsPerSample = bpm / 60.0 / sr;

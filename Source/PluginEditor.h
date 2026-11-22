@@ -187,10 +187,13 @@ namespace ui
             g.setColour(accent); g.setFont(font(11.0f, true));
             g.drawText(title, pad + 2, 4, getWidth() - pad * 2, 16, juce::Justification::centredLeft);
         }
+        int getCols() const { return cols; }
         void resized() override
         {
+            const int cw = (getWidth() - pad * 2) / cols;
+            const int ch = std::max(cellH, (getHeight() - header - pad) / std::max(1, rows()));
             for (size_t i = 0; i < items.size(); ++i)
-                items[i]->setBounds(pad + ((int) i % cols) * cellW, header + ((int) i / cols) * cellH, cellW, cellH);
+                items[i]->setBounds(pad + ((int) i % cols) * cw, header + ((int) i / cols) * ch, cw, ch);
         }
     private:
         int rows() const { return ((int) items.size() + cols - 1) / cols; }
@@ -202,7 +205,7 @@ namespace ui
     class SeqGrid : public juce::Component, private juce::Timer
     {
     public:
-        explicit SeqGrid(ElevateAudioProcessor& p);
+        SeqGrid(ElevateAudioProcessor& p, int index);
         ~SeqGrid() override { stopTimer(); }
         void paint(juce::Graphics&) override;
         void resized() override;
@@ -214,7 +217,10 @@ namespace ui
         using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
         ElevateAudioProcessor& proc;
-        int lane = 0;
+        int idx = 0, lane = 0;           // idx: which sequencer (0 or 1)
+        juce::ComboBox destBox;          // Sequencer 2 routing
+        juce::Slider amtBar, slewBar;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> destAtt;
         juce::TextButton tabs[3];
         juce::Slider steps[3][16], octs[16], lengths[3];
         juce::TextButton stepOn[3][16];
@@ -239,9 +245,9 @@ private:
     juce::Component content;
     juce::OwnedArray<juce::Component> owned;
     juce::OwnedArray<ui::Panel> panels;
-    std::unique_ptr<ui::SeqGrid> seqGrid;
+    std::unique_ptr<ui::SeqGrid> seqGrids[2];
     juce::ComboBox presetBox;
     juce::TextButton prevBtn { "<" }, nextBtn { ">" };
 
-    static constexpr int baseW = 1180, baseH = 760;
+    static constexpr int baseW = 1240, baseH = 944;
 };

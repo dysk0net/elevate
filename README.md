@@ -5,7 +5,7 @@ instrument whose feature set is modelled on the controls described in the UAD An
 It is not affiliated with Universal Audio, and contains no UAD code, samples or artwork.
 
 ## Features
-- **2 oscillators** with continuous Triangle → Saw → Square → Pulse shape, octave/coarse/fine tune, shape mod (LFO or filter env)
+- **2 oscillators** (each with up to **11-voice unison** and its own unison detune) with continuous Triangle → Saw → Square → Pulse shape, octave/coarse/fine tune, shape mod (LFO or filter env)
 - **Sub oscillator** (-1 / -2 oct), **noise** (pink/white), **Osc 2 Warp** (Sync / Ring, up to 36 st) with LFO/F.ENV mod, pitch mod
 - **Filter**: 24 dB ladder low-pass with Drive, Resonance, Growl; Env / LFO / Key tracking; 12 dB high-pass with "To HP" follow
 - **Two ADSR envelopes** (Filter, Amp) with velocity scaling
@@ -13,6 +13,7 @@ It is not affiliated with Universal Audio, and contains no UAD code, samples or 
 - **Voice**: Para (4 voices, shared filter/envelopes), Mono, Unison with Detune; Legato, Glide, mod wheel destinations (Vibrato / Cutoff / LFO Rate), bend range, master tune
 - **Effects**: Chorus, Mod FX (Phaser, Flange +/-, Warble), Space FX (tempo-synced Echo, Spring, Hall)
 - **16-step sequencer** with Gate / Pitch / Velocity lanes, independent lane lengths (polyrhythm), legato ties, octave per step, swing, gate scale, 5 directions, retrigger or host-locked
+- **Sequencer 2 (mod routing)**: a second, identical 16-step sequencer that drives any control (73 destinations) instead of playing notes. Pitch lane = bipolar level (±12 = full scale), velocity lane = depth, gate lane = when it's active; plus Amount and Slew
 - Default MIDI CC map, 9 factory presets
 
 ## Build

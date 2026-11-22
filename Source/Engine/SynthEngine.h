@@ -22,12 +22,27 @@ struct EngineParams
     bool lfoSync = false, lfoRetrig = false; float lfoRate = 4, lfoTilt = 0; int lfoDiv = 2, lfoShape = 0;
     int mode = 0; bool legato = false; float detune = 0.3f, bend = 2; int modDest = 0; float modAmt = 0.5f;
     float glide = 0, tune = 0, volume = 0.7f;
+    int o1Uni = 1, o2Uni = 1; float o1UniDet = 0.25f, o2UniDet = 0.25f;   // per-oscillator unison
 };
 
 class SynthEngine
 {
 public:
     static constexpr int numSlots = 4;
+    static constexpr int maxUni = 11;
+
+    SynthEngine()
+    {
+        // Spread starting phases so stacked unison voices don't begin coherent.
+        for (auto& sl : slots)
+            for (int u = 0; u < maxUni; ++u)
+            {
+                const float ph = std::fmod((float) u * 0.61803f, 1.0f);
+                sl.o1[u].reset(ph);
+                sl.o2[u].reset(std::fmod(ph + 0.37f, 1.0f));
+                sl.master[u].reset(std::fmod(ph + 0.37f, 1.0f));
+            }
+    }
 
     void prepare(double sr)
     {
@@ -113,6 +128,18 @@ public:
         const float keyNote = held.empty() ? lastKeyNote : (float) held.back().note + (float) seqSemis;
         lastKeyNote = keyNote;
 
+        // Unison: symmetric detune ratios for each oscillator's stacked voices.
+        const int n1 = std::clamp(p.o1Uni, 1, maxUni), n2 = std::clamp(p.o2Uni, 1, maxUni);
+        float r1[maxUni], r2[maxUni];
+        for (int u = 0; u < maxUni; ++u)
+        {
+            const float o1 = n1 > 1 ? 2.0f * (float) u / (float) (n1 - 1) - 1.0f : 0.0f;
+            const float o2 = n2 > 1 ? 2.0f * (float) u / (float) (n2 - 1) - 1.0f : 0.0f;
+            r1[u] = std::exp2(o1 * p.o1UniDet * 100.0f / 1200.0f);     // up to +/-100 cents
+            r2[u] = std::exp2(o2 * p.o2UniDet * 100.0f / 1200.0f);
+        }
+        const float uni1 = 1.0f / std::sqrt((float) n1), uni2 = 1.0f / std::sqrt((float) n2);
+
         for (int n = 0; n < numSamples; ++n)
         {
             const float lfoV = lfo.next(lfoHz, p.lfoShape, p.lfoTilt);
@@ -133,6 +160,7 @@ public:
             sO1.set(p.o1Vol); sO2.set(p.o2Vol); sNoise.set(p.noiseVol); sSub.set(p.subLvl);
             const float v1 = sO1.next(), v2 = sO2.next(), vn = sNoise.next(), vs = sSub.next();
 
+            const float warpRatio = std::exp2(warpSemis / 12.0f);
             float mix = 0.0f; int voices = 0;
             for (auto& s : slots)
             {
@@ -144,7 +172,9 @@ public:
 
                 bool wrapped = false;
                 const float f1 = base * std::exp2((float) p.o1Oct + p.o1Coarse / 12.0f + p.o1Fine / 1200.0f);
-                float a = s.o1.process(f1, sh1, sampleRate, wrapped) * v1;
+                float a = 0.0f;
+                for (int u = 0; u < n1; ++u) a += s.o1[u].process(f1 * r1[u], sh1, sampleRate, wrapped);
+                a *= v1 * uni1;
 
                 if (vs > 0.0001f)
                 {
@@ -154,19 +184,24 @@ public:
                 }
 
                 const float f2 = base * std::exp2((float) p.o2Oct + p.o2Coarse / 12.0f + p.o2Fine / 1200.0f);
-                float b;
-                if (warpSemis < 0.01f)
+                float b = 0.0f;
+                for (int u = 0; u < n2; ++u)
                 {
-                    b = s.o2.process(f2, sh2, sampleRate, wrapped);
+                    const float fu = f2 * r2[u];
+                    if (warpSemis < 0.01f)
+                    {
+                        b += s.o2[u].process(fu, sh2, sampleRate, wrapped);
+                    }
+                    else
+                    {
+                        bool mw = false;
+                        const float m = s.master[u].process(fu, 0.0f, sampleRate, mw);
+                        const float y = s.o2[u].process(fu * warpRatio, sh2, sampleRate, wrapped);
+                        if (p.warpMode == 0) { if (mw) s.o2[u].setPhase(0.0f); b += y; }
+                        else                 b += y * m;
+                    }
                 }
-                else
-                {
-                    bool mw = false;
-                    const float m = s.master.process(f2, 0.0f, sampleRate, mw);
-                    b = s.o2.process(f2 * std::exp2(warpSemis / 12.0f), sh2, sampleRate, wrapped);
-                    if (p.warpMode == 0) { if (mw) s.o2.setPhase(0.0f); }
-                    else                 b *= m;
-                }
+                b *= uni2;
                 mix += a + b * v2;
             }
 
@@ -197,7 +232,7 @@ private:
     struct Held { int note; float vel; };
     struct Slot
     {
-        Oscillator o1, o2, master; float subPhase = 0, curNote = 60, targetNote = 60, detuneOffset = 0; bool valid = false;
+        Oscillator o1[maxUni], o2[maxUni], master[maxUni]; float subPhase = 0, curNote = 60, targetNote = 60, detuneOffset = 0; bool valid = false;
     };
     struct Smoother
     {

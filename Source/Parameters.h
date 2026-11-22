@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <mutex>
 
 // Parameter IDs for Elevate. Layout follows the OSC / MIXER / FILTER / ENV / LFO /
 // VOICE / FX / SEQUENCER sections of a classic paraphonic analog mono-synth.
@@ -71,9 +72,21 @@ namespace ID
                               seqGate = "seq_gate_scale", seqDir = "seq_dir", seqLink = "seq_link",
                               seqRetrig = "seq_retrig";
     inline const juce::String seqLenG = "seq_len_gate", seqLenP = "seq_len_pitch", seqLenV = "seq_len_vel";
-    inline juce::String stepOn(char lane, int i)  { return "seq_" + juce::String::charToString(lane) + "_on_"  + juce::String(i); }
-    inline juce::String stepVal(char lane, int i) { return "seq_" + juce::String::charToString(lane) + "_val_" + juce::String(i); }
-    inline juce::String stepOct(int i)            { return "seq_p_oct_" + juce::String(i); }
+    // Sequencer 2 reuses every sequencer ID with a "seq2_" prefix.
+    inline juce::String sq(int n, const juce::String& id) { return n == 0 ? id : "seq2" + id.substring(3); }
+    inline juce::String stepOn(char lane, int i, int n = 0)
+    { return sq(n, "seq_" + juce::String::charToString(lane) + "_on_" + juce::String(i)); }
+    inline juce::String stepVal(char lane, int i, int n = 0)
+    { return sq(n, "seq_" + juce::String::charToString(lane) + "_val_" + juce::String(i)); }
+    inline juce::String stepOct(int i, int n = 0) { return sq(n, "seq_p_oct_" + juce::String(i)); }
+
+    // Sequencer 2 routing
+    inline const juce::String seq2Dest = "seq2_dest", seq2Amt = "seq2_amt", seq2Slew = "seq2_slew";
+    // Per-oscillator unison
+    inline const juce::String o1Uni = "o1_uni_voices", o1UniDet = "o1_uni_detune",
+                              o2Uni = "o2_uni_voices", o2UniDet = "o2_uni_detune";
+    // Ordered IDs of every control Sequencer 2 can drive (index 0 of the choice is "None").
+    inline juce::StringArray& destIds() { static juce::StringArray a; return a; }
 }
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
@@ -116,6 +129,10 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     chc(ID::warpMode, "Warp Mode", { "Sync", "Ring" });
     bip(ID::pitchMod, "Pitch Mod");
     chc(ID::pitchSrc, "Pitch Src", src);
+    p.push_back(std::make_unique<I>(ParameterID{ID::o1Uni, 1}, "Osc1 Unison Voices", 1, 11, 1));
+    flt(ID::o1UniDet, "Osc1 Unison Detune", 0, 1, 0.25f);
+    p.push_back(std::make_unique<I>(ParameterID{ID::o2Uni, 1}, "Osc2 Unison Voices", 1, 11, 1));
+    flt(ID::o2UniDet, "Osc2 Unison Detune", 0, 1, 0.25f);
 
     flt(ID::o1Vol, "Osc1 Volume", 0, 1, 0.8f);
     flt(ID::o2Vol, "Osc2 Volume", 0, 1, 0.0f);
@@ -174,27 +191,45 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     flt(ID::spTime, "Space Time", 0, 1, 0.4f);
     flt(ID::spFb, "Space Feedback/Tone", 0, 1, 0.4f);
 
-    bln(ID::seqOn, "Sequencer On", false);
-    chc(ID::seqRate, "Seq Rate", { "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32" }, 3);
-    flt(ID::seqSwing, "Seq Swing", 0, 0.75f, 0);
-    flt(ID::seqGate, "Seq Gate Scale", 0.25f, 2.0f, 1.0f);
-    chc(ID::seqDir, "Seq Direction", { "Forward", "Reverse", "PingPong 1", "PingPong 2", "Random" });
-    bln(ID::seqLink, "Seq Link Lanes", true);
-    bln(ID::seqRetrig, "Seq Retrigger", true);
-    p.push_back(std::make_unique<I>(ParameterID{ID::seqLenG, 1}, "Gate Length", 1, 16, 16));
-    p.push_back(std::make_unique<I>(ParameterID{ID::seqLenP, 1}, "Pitch Length", 1, 16, 16));
-    p.push_back(std::make_unique<I>(ParameterID{ID::seqLenV, 1}, "Vel Length", 1, 16, 16));
+    // Sequencer 2 can be routed to any control created above.
+    static std::once_flag once;
+    std::call_once(once, [&] { for (auto& q : p) ID::destIds().add(q->getParameterID()); });
+    StringArray destChoices { "None" };
+    for (auto& q : p) destChoices.add(q->getName(64));
 
-    for (int i = 0; i < 16; ++i)
+    for (int n = 0; n < 2; ++n)
     {
-        const auto n = String(i + 1);
-        bln(ID::stepOn('g', i), "Gate On " + n, true);
-        flt(ID::stepVal('g', i), "Gate Len " + n, 0.05f, 1.2f, 0.5f);   // >1.0 = legato tie
-        bln(ID::stepOn('p', i), "Pitch On " + n, true);
-        p.push_back(std::make_unique<I>(ParameterID{ID::stepVal('p', i), 1}, "Pitch " + n, -12, 12, 0));
-        p.push_back(std::make_unique<I>(ParameterID{ID::stepOct(i), 1}, "Octave " + n, -3, 3, 0));
-        bln(ID::stepOn('v', i), "Vel On " + n, true);
-        flt(ID::stepVal('v', i), "Vel " + n, 0, 1, 0.8f);
+        const String pre = n == 0 ? "Seq " : "Seq2 ";
+        auto sid = [n](const String& id) { return ID::sq(n, id); };
+        bln(sid(ID::seqOn), pre + "On", false);
+        chc(sid(ID::seqRate), pre + "Rate", { "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32" }, 3);
+        flt(sid(ID::seqSwing), pre + "Swing", 0, 0.75f, 0);
+        flt(sid(ID::seqGate), pre + "Gate Scale", 0.25f, 2.0f, 1.0f);
+        chc(sid(ID::seqDir), pre + "Direction", { "Forward", "Reverse", "PingPong 1", "PingPong 2", "Random" });
+        bln(sid(ID::seqLink), pre + "Link Lanes", true);
+        bln(sid(ID::seqRetrig), pre + "Retrigger", true);
+        p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenG), 1}, pre + "Gate Length", 1, 16, 16));
+        p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenP), 1}, pre + "Pitch Length", 1, 16, 16));
+        p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenV), 1}, pre + "Vel Length", 1, 16, 16));
+
+        if (n == 1)
+        {
+            chc(ID::seq2Dest, "Seq2 Destination", destChoices);
+            flt(ID::seq2Amt, "Seq2 Amount", -1.0f, 1.0f, 0.5f);
+            flt(ID::seq2Slew, "Seq2 Slew", 0.0f, 1.0f, 0.0f);
+        }
+
+        for (int i = 0; i < 16; ++i)
+        {
+            const auto num = String(i + 1);
+            bln(ID::stepOn('g', i, n), pre + "Gate On " + num, true);
+            flt(ID::stepVal('g', i, n), pre + "Gate Len " + num, 0.05f, 1.2f, 0.5f);   // >1.0 = legato tie
+            bln(ID::stepOn('p', i, n), pre + "Pitch On " + num, true);
+            p.push_back(std::make_unique<I>(ParameterID{ID::stepVal('p', i, n), 1}, pre + "Pitch " + num, -12, 12, 0));
+            p.push_back(std::make_unique<I>(ParameterID{ID::stepOct(i, n), 1}, pre + "Octave " + num, -3, 3, 0));
+            bln(ID::stepOn('v', i, n), pre + "Vel On " + num, true);
+            flt(ID::stepVal('v', i, n), pre + "Vel " + num, 0, 1, 0.8f);
+        }
     }
     return { p.begin(), p.end() };
 }

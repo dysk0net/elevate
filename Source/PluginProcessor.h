@@ -36,25 +36,39 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState apvts;
-    Sequencer sequencer;                         // public so the UI can show the playhead
+    Sequencer sequencers[2];                     // [0] plays notes, [1] modulates a chosen control; public for UI playheads
     std::atomic<float> uiModWheel { 0.0f };
 
 private:
-    struct SeqEvent { int offset; Sequencer::Ev type; int semis; float vel; bool legato; };
+    struct SeqEvent { int offset; Sequencer::Ev type; int semis; float vel; bool legato; int which; };
 
-    float v(const juce::String& id) const { return apvts.getRawParameterValue(id)->load(); }
+    // Reads a parameter; the control chosen as Sequencer 2's destination gets its modulation added.
+    float v(const juce::String& id) const
+    {
+        auto* raw = apvts.getRawParameterValue(id);
+        const float x = raw->load();
+        if (raw != modRaw || modParam == nullptr) return x;
+        return modParam->convertFrom0to1(juce::jlimit(0.0f, 1.0f, modParam->convertTo0to1(x) + modCur));
+    }
     int   vi(const juce::String& id) const { return (int) std::lround(v(id)); }
     bool  vb(const juce::String& id) const { return v(id) > 0.5f; }
 
     void readEngineParams();
-    void readSequencerSnapshot();
+    void readSeqSnapshot(Sequencer::Snapshot& s, int n);
+    void updateModDest();
+    void stepMod(int numSamples);
+    void processSeg(float* out, int len);
     void handleMidi(const juce::MidiMessage& m);
     void renderSegment(float* out, int len, double ppq);
     void setParam(const juce::String& id, float normalised);
 
     SynthEngine engine;
     EngineParams engineParams;
-    Sequencer::Snapshot seqSnap;
+    Sequencer::Snapshot seqSnaps[2];
+    juce::RangedAudioParameter* modParam = nullptr;   // Sequencer 2 destination
+    std::atomic<float>* modRaw = nullptr;
+    int modDestIdx = 0;
+    float modStep = 0.0f, modCur = 0.0f;               // step level (before amount) and slewed offset
     std::vector<SeqEvent> seqEvents;
 
     fx::Chorus chorus;
