@@ -13,7 +13,8 @@ It is not affiliated with Universal Audio, and contains no UAD code, samples or 
 - **Voice**: Para (4 voices, shared filter/envelopes), Mono, Unison with Detune; Legato, Glide, mod wheel destinations (Vibrato / Cutoff / LFO Rate), bend range, master tune
 - **Effects**: Chorus, Mod FX (Phaser, Flange +/-, Warble), Space FX (tempo-synced Echo, Spring, Hall)
 - **16-step sequencer** with Gate / Pitch / Velocity lanes, independent lane lengths (polyrhythm), legato ties, octave per step, swing, gate scale, 5 directions, retrigger or host-locked
-- **Sequencer 2 (mod routing)**: a second, identical 16-step sequencer that drives any control (73 destinations) instead of playing notes. Pitch lane = bipolar level (±12 = full scale), velocity lane = depth, gate lane = when it's active; plus Amount and Slew
+- **Mod Sequencer (Sequencer 2)**: a second 16-step sequencer that drives any control (73 destinations) instead of playing notes. Each step's pitch value (±12 = full scale) is the modulation level, held until the next step; plus Amount (long-throw slider for fine control) and Slew
+- **Randomizers** on both sequencers (all lanes or just the visible lane on Sequencer 1; full-range steps on the Mod Sequencer)
 - Default MIDI CC map, 9 factory presets
 
 ## Build

@@ -3,6 +3,56 @@
 using namespace ui;
 
 //==============================================================================
+// Sequencer 1 can link its lane lengths; the mod sequencer only has the pitch lane.
+static bool isLinked(ElevateAudioProcessor& p, int idx)
+{ return idx == 0 && p.apvts.getRawParameterValue(ID::seqLink)->load() > 0.5f; }
+
+void SeqGrid::randomise(bool allLanes)
+{
+    juce::Random rng;
+    auto set = [&](const juce::String& id, float real)
+    {
+        if (auto* q = proc.apvts.getParameter(id))
+        { q->beginChangeGesture(); q->setValueNotifyingHost(q->convertTo0to1(real)); q->endChangeGesture(); }
+    };
+    static const int scaleSteps[] { 0, 0, 3, 5, 7, 7, 10, 12, -2, -5 };   // minor-pentatonic flavoured
+    static const float gateLens[] { 0.25f, 0.5f, 0.5f, 0.75f, 1.0f };
+
+    const bool doGate  = idx == 0 && (allLanes || lane == 0);
+    const bool doPitch = idx == 1 || allLanes || lane == 1;
+    const bool doVel   = idx == 0 && (allLanes || lane == 2);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        if (doGate)
+        {
+            const bool on = i == 0 || rng.nextFloat() < 0.8f;
+            set(ID::stepOn('g', i, idx), on ? 1.0f : 0.0f);
+            set(ID::stepVal('g', i, idx), rng.nextFloat() < 0.12f ? 1.1f : gateLens[rng.nextInt(5)]);   // 1.1 = legato tie
+        }
+        if (doPitch)
+        {
+            set(ID::stepOn('p', i, idx), 1.0f);
+            if (idx == 0)
+            {
+                set(ID::stepVal('p', i, idx), (float) scaleSteps[rng.nextInt(10)]);
+                const float o = rng.nextFloat();
+                set(ID::stepOct(i, idx), o < 0.85f ? 0.0f : (o < 0.95f ? 1.0f : -1.0f));
+            }
+            else   // mod sequencer: full bipolar range
+            {
+                set(ID::stepVal('p', i, idx), (float) (rng.nextInt(25) - 12));
+                set(ID::stepOct(i, idx), 0.0f);
+            }
+        }
+        if (doVel)
+        {
+            set(ID::stepOn('v', i, idx), 1.0f);
+            set(ID::stepVal('v', i, idx), rng.nextFloat() < 0.2f ? 1.0f : 0.45f + 0.5f * rng.nextFloat());
+        }
+    }
+}
+
 SeqGrid::SeqGrid(ElevateAudioProcessor& p, int index) : proc(p), idx(index)
 {
     static const char* laneNames[] { "GATE", "PITCH", "VEL" };
@@ -52,8 +102,22 @@ SeqGrid::SeqGrid(ElevateAudioProcessor& p, int index) : proc(p), idx(index)
         sliderAtts.add(new SA(proc.apvts, ID::stepOct(s, idx), octs[s]));
     }
 
+    rndAll.setButtonText(idx == 0 ? "RND ALL" : "RANDOMIZE");
+    rndAll.setTooltip(idx == 0 ? "Randomize all three lanes" : "Randomize the mod sequencer steps");
+    rndAll.onClick = [this] { randomise(true); };
+    addAndMakeVisible(rndAll);
+    if (idx == 0)
+    {
+        rndLane.setButtonText("RND LANE");
+        rndLane.setTooltip("Randomize only the lane being shown");
+        rndLane.onClick = [this] { randomise(false); };
+        addAndMakeVisible(rndLane);
+    }
+
     if (idx == 1)   // routing bar: destination, amount, slew
     {
+        tabs[1].setButtonText("MOD SEQUENCER");   // pitch lane is the only one that matters here
+        tabs[0].setVisible(false); tabs[2].setVisible(false);
         if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(proc.apvts.getParameter(ID::seq2Dest)))
             destBox.addItemList(c->choices, 1);
         destBox.setTooltip("Control driven by Sequencer 2");
@@ -62,19 +126,23 @@ SeqGrid::SeqGrid(ElevateAudioProcessor& p, int index) : proc(p), idx(index)
         for (auto* sl : { &amtBar, &slewBar })
         { sl->setSliderStyle(juce::Slider::LinearBar); sl->setPopupDisplayEnabled(true, true, nullptr); addAndMakeVisible(sl); }
         amtBar.setTextValueSuffix(" amt");  slewBar.setTextValueSuffix(" slew");
+        amtBar.setMouseDragSensitivity(1500);         // long throw => finer control
+        amtBar.setNumDecimalPlacesToDisplay(3);
+        amtBar.setDoubleClickReturnValue(true, 0.5);
         sliderAtts.add(new SA(proc.apvts, ID::seq2Amt, amtBar));
         sliderAtts.add(new SA(proc.apvts, ID::seq2Slew, slewBar));
     }
 
-    tabs[0].setToggleState(true, juce::dontSendNotification);
-    showLane(0);
+    const int firstLane = idx == 1 ? 1 : 0;
+    tabs[firstLane].setToggleState(true, juce::dontSendNotification);
+    showLane(firstLane);
     startTimerHz(30);
 }
 
 void SeqGrid::showLane(int l)
 {
     lane = l;
-    const bool link = proc.apvts.getRawParameterValue(ID::sq(idx, ID::seqLink))->load() > 0.5f;
+    const bool link = isLinked(proc, idx);
     for (int i = 0; i < 3; ++i)
     {
         lengths[i].setVisible(link ? i == 0 : i == l);
@@ -87,7 +155,7 @@ void SeqGrid::showLane(int l)
 
 void SeqGrid::timerCallback()
 {
-    const bool link = proc.apvts.getRawParameterValue(ID::sq(idx, ID::seqLink))->load() > 0.5f;
+    const bool link = isLinked(proc, idx);
     if (link != lengths[0].isVisible() || (! link && ! lengths[lane].isVisible())) showLane(lane);
     repaint();
 }
@@ -96,14 +164,24 @@ void SeqGrid::resized()
 {
     auto r = getLocalBounds().reduced(4, 0);
     auto top = r.removeFromTop(24);
-    for (int i = 0; i < 3; ++i) tabs[i].setBounds(top.removeFromLeft(70).reduced(2, 0));
-    for (auto& l : lengths) l.setBounds(top.removeFromRight(150).reduced(2, 2));
-    if (idx == 1)
+    if (idx == 0)
+        for (int i = 0; i < 3; ++i) tabs[i].setBounds(top.removeFromLeft(70).reduced(2, 0));
+    else
+        tabs[1].setBounds(top.removeFromLeft(124).reduced(2, 0));
+    for (auto& l : lengths) l.setBounds(top.removeFromRight(130).reduced(2, 2));
+    if (idx == 0)
     {
         top.removeFromLeft(12);
-        destBox.setBounds(top.removeFromLeft(240).reduced(2, 1));
-        amtBar.setBounds(top.removeFromLeft(110).reduced(2, 2));
-        slewBar.setBounds(top.removeFromLeft(110).reduced(2, 2));
+        rndAll.setBounds(top.removeFromLeft(84).reduced(2, 0));
+        rndLane.setBounds(top.removeFromLeft(84).reduced(2, 0));
+    }
+    else
+    {
+        top.removeFromLeft(10);
+        destBox.setBounds(top.removeFromLeft(200).reduced(2, 1));
+        amtBar.setBounds(top.removeFromLeft(300).reduced(2, 1));      // long slider for fine amount control
+        slewBar.setBounds(top.removeFromLeft(90).reduced(2, 2));
+        rndAll.setBounds(top.removeFromLeft(84).reduced(2, 0));
     }
 
     const int w = r.getWidth() / 16;
@@ -124,7 +202,7 @@ void SeqGrid::paint(juce::Graphics& g)
 {
     const int w = (getWidth() - 8) / 16;
     const int cur = proc.sequencers[idx].uiStep[lane].load();
-    const bool link = proc.apvts.getRawParameterValue(ID::sq(idx, ID::seqLink))->load() > 0.5f;
+    const bool link = isLinked(proc, idx);
     const juce::String lenId = ID::sq(idx, (lane == 0 || link) ? ID::seqLenG : (lane == 1 ? ID::seqLenP : ID::seqLenV));
     const int len = (int) std::lround(proc.apvts.getRawParameterValue(lenId)->load());
 
@@ -197,10 +275,12 @@ ElevateEditor::ElevateEditor(ElevateAudioProcessor& p) : AudioProcessorEditor(&p
     Panel* seqPanels[2];
     for (int n = 0; n < 2; ++n)
     {
-        auto* seq = seqPanels[n] = panel(n == 0 ? "SEQUENCER" : "SEQUENCER 2  (MOD ROUTING)", 4);
+        auto* seq = seqPanels[n] = panel(n == 0 ? "SEQUENCER" : "SEQUENCER 2", 4);
         toggle(seq, ID::sq(n, ID::seqOn), "On"); choice(seq, ID::sq(n, ID::seqRate), "Rate");
-        knob(seq, ID::sq(n, ID::seqSwing), "Swing"); knob(seq, ID::sq(n, ID::seqGate), "Gate Scale");
-        choice(seq, ID::sq(n, ID::seqDir), "Direction"); toggle(seq, ID::sq(n, ID::seqLink), "Link Lanes");
+        knob(seq, ID::sq(n, ID::seqSwing), "Swing");
+        if (n == 0) knob(seq, ID::sq(n, ID::seqGate), "Gate Scale");
+        choice(seq, ID::sq(n, ID::seqDir), "Direction");
+        if (n == 0) toggle(seq, ID::sq(n, ID::seqLink), "Link Lanes");
         toggle(seq, ID::sq(n, ID::seqRetrig), "Retrigger");
     }
 

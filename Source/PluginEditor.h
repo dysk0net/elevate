@@ -212,12 +212,14 @@ namespace ui
     private:
         void timerCallback() override;
         void showLane(int lane);
+        void randomise(bool allLanes);
 
         using SA = juce::AudioProcessorValueTreeState::SliderAttachment;
         using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
         ElevateAudioProcessor& proc;
         int idx = 0, lane = 0;           // idx: which sequencer (0 or 1)
+        juce::TextButton rndAll, rndLane;
         juce::ComboBox destBox;          // Sequencer 2 routing
         juce::Slider amtBar, slewBar;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> destAtt;

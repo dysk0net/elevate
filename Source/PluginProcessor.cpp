@@ -83,6 +83,13 @@ void ElevateAudioProcessor::readSeqSnapshot(Sequencer::Snapshot& s, int n)
         s.oct[i] = vi(ID::stepOct(i, n));
         s.stepOn[2][i] = vb(ID::stepOn('v', i, n)); s.val[2][i] = v(ID::stepVal('v', i, n));
     }
+    if (n == 1)   // Mod sequencer: only the pitch lane matters; gate and velocity are fixed open / full
+    {
+        s.len[0] = s.len[2] = s.len[1] = vi(ID::sq(1, ID::seqLenP));
+        s.gateScale = 1.0f;
+        for (int i = 0; i < Sequencer::numSteps; ++i)
+        { s.stepOn[0][i] = true; s.val[0][i] = 1.0f; s.stepOn[2][i] = true; s.val[2][i] = 1.0f; }
+    }
 }
 
 // Picks up a changed Sequencer 2 destination and caches its parameter objects.
@@ -143,6 +150,7 @@ void ElevateAudioProcessor::handleMidi(const juce::MidiMessage& m)
 void ElevateAudioProcessor::renderSegment(float* out, int len, double ppq)
 {
     if (len <= 0) return;
+    if (! seqSnaps[1].on || ! engine.anyKeyHeld()) modStep = 0.0f;   // mod sequencer idle: release the control
     seqEvents.clear();
     auto collect = [this](int which)
     {
@@ -166,11 +174,8 @@ void ElevateAudioProcessor::renderSegment(float* out, int len, double ppq)
             if (e.type == Sequencer::Ev::NoteOn) engine.seqNoteOn(e.semis, e.vel, e.legato);
             else                                 engine.seqNoteOff();
         }
-        else   // Sequencer 2: pitch lane = bipolar level (12 semitones = full scale), velocity lane = depth
-        {
-            modStep = e.type == Sequencer::Ev::NoteOn
-                          ? juce::jlimit(-1.0f, 1.0f, (float) e.semis / 12.0f) * e.vel : 0.0f;
-        }
+        else if (e.type == Sequencer::Ev::NoteOn)   // mod sequencer: pitch lane = bipolar level (12 = full scale)
+            modStep = juce::jlimit(-1.0f, 1.0f, (float) e.semis / 12.0f);   // holds until the next step
     }
     processSeg(out + pos, len - pos);
 }
