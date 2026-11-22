@@ -14,7 +14,8 @@ It is not affiliated with Universal Audio, and contains no UAD code, samples or 
 - **Effects**: Chorus, Mod FX (Phaser, Flange +/-, Warble), Space FX (tempo-synced Echo, Spring, Hall)
 - **16-step sequencer** with Gate / Pitch / Velocity lanes, independent lane lengths (polyrhythm), legato ties, octave per step, swing, gate scale, 5 directions, retrigger or host-locked
 - **Mod Sequencer (Sequencer 2)**: a second 16-step sequencer that drives any control (73 destinations) instead of playing notes. Each step's pitch value (±12 = full scale) is the modulation level, held until the next step; plus Amount (long-throw slider for fine control) and Slew
-- **Randomizers** on both sequencers (all lanes or just the visible lane on Sequencer 1; full-range steps on the Mod Sequencer)
+- **Randomizers** on both sequencers with a Chaos control: low settings nudge the existing pattern with small, melodic steps; high settings rewrite it. Sequencer 1 has RND ALL / RND LANE; the Mod Sequencer fills its steps with a limited-jump random walk
+- **Scale lock** for Sequencer 1's pitch lane (Off / Major / Minor / Phrygian / Blues, relative to the played key): playback is quantised, dragged steps snap to the scale, and changing scale pulls existing steps onto it
 - Default MIDI CC map, 9 factory presets
 
 ## Build

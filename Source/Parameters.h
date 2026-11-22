@@ -81,6 +81,7 @@ namespace ID
     inline juce::String stepOct(int i, int n = 0) { return sq(n, "seq_p_oct_" + juce::String(i)); }
 
     // Sequencer 2 routing
+    inline const juce::String seqRnd = "seq_rnd", seqScale = "seq_scale";
     inline const juce::String seq2Dest = "seq2_dest", seq2Amt = "seq2_amt", seq2Slew = "seq2_slew";
     // Per-oscillator unison
     inline const juce::String o1Uni = "o1_uni_voices", o1UniDet = "o1_uni_detune",
@@ -208,6 +209,8 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         chc(sid(ID::seqDir), pre + "Direction", { "Forward", "Reverse", "PingPong 1", "PingPong 2", "Random" });
         bln(sid(ID::seqLink), pre + "Link Lanes", true);
         bln(sid(ID::seqRetrig), pre + "Retrigger", true);
+        flt(sid(ID::seqRnd), pre + "Random Chaos", 0.0f, 1.0f, 0.5f);
+        if (n == 0) chc(ID::seqScale, "Seq Scale", { "Off", "Major", "Minor", "Phrygian", "Blues" });
         p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenG), 1}, pre + "Gate Length", 1, 16, 16));
         p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenP), 1}, pre + "Pitch Length", 1, 16, 16));
         p.push_back(std::make_unique<I>(ParameterID{sid(ID::seqLenV), 1}, pre + "Vel Length", 1, 16, 16));

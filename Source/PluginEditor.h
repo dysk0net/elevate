@@ -201,6 +201,15 @@ namespace ui
     };
 
     //==========================================================================
+    // Vertical step slider; the pitch lane snaps dragged values to the selected scale.
+    class StepSlider : public juce::Slider
+    {
+    public:
+        std::function<int()> scale;
+        double snapValue(double v, DragMode) override
+        { return scale ? (double) Sequencer::quantise((int) std::lround(v), scale()) : v; }
+    };
+
     // 3-lane x 16-step sequencer view.
     class SeqGrid : public juce::Component, private juce::Timer
     {
@@ -224,7 +233,9 @@ namespace ui
         juce::Slider amtBar, slewBar;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> destAtt;
         juce::TextButton tabs[3];
-        juce::Slider steps[3][16], octs[16], lengths[3];
+        StepSlider steps[3][16];
+        juce::Slider octs[16], lengths[3], chaosBar;
+        int lastScale = 0;
         juce::TextButton stepOn[3][16];
         juce::OwnedArray<SA> sliderAtts;
         juce::OwnedArray<BA> buttonAtts;

@@ -18,7 +18,7 @@ public:
     struct Snapshot
     {
         bool on = false, retrig = true;
-        int rateIdx = 3, dir = Forward;
+        int rateIdx = 3, dir = Forward, scale = 0;   // scale: 0 Off, 1 Major, 2 Minor, 3 Phrygian, 4 Blues
         float swing = 0.0f, gateScale = 1.0f;
         int len[3] { 16, 16, 16 };
         bool stepOn[3][numSteps];
@@ -28,6 +28,21 @@ public:
 
     // Current step per lane, for the UI playhead (-1 when stopped).
     std::atomic<int> uiStep[3] { -1, -1, -1 };
+
+    // Snaps a semitone offset (relative to the played key) to the nearest scale tone.
+    static int quantise(int semis, int scale)
+    {
+        static const int count[] { 0, 7, 7, 7, 6 };
+        static const int tone[][7] { { 0 }, { 0, 2, 4, 5, 7, 9, 11 }, { 0, 2, 3, 5, 7, 8, 10 },
+                                     { 0, 1, 3, 5, 7, 8, 10 }, { 0, 3, 5, 6, 7, 10, 0 } };
+        if (scale <= 0 || scale > 4) return semis;
+        const int oct = (int) std::floor((double) semis / 12.0), r = semis - 12 * oct;
+        int best = 0, bd = r;                                   // ties resolve downwards
+        for (int i = 0; i < count[scale]; ++i)
+            if (std::abs(r - tone[scale][i]) < bd) { bd = std::abs(r - tone[scale][i]); best = tone[scale][i]; }
+        if (12 - r < bd) best = 12;
+        return 12 * oct + best;
+    }
 
     template <class Fn>
     void process(int numSamples, double bpm, double sr, bool hostPlaying, double hostPpq,
@@ -118,7 +133,8 @@ private:
 
         const float g = s.val[Gate][pg];
         const bool tie = g > 1.0f;
-        const int semis = s.stepOn[Pitch][pp] ? (int) std::lround(s.val[Pitch][pp]) + 12 * s.oct[pp] : 0;
+        const int semis = s.stepOn[Pitch][pp]
+                              ? quantise((int) std::lround(s.val[Pitch][pp]) + 12 * s.oct[pp], s.scale) : 0;
         const float vel = s.stepOn[Vel][pv] ? s.val[Vel][pv] : 0.8f;
 
         if (gateActive && ! tieNext) fn(offset, Ev::NoteOff, 0, 0.0f, false);

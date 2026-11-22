@@ -71,6 +71,7 @@ void ElevateAudioProcessor::readSeqSnapshot(Sequencer::Snapshot& s, int n)
     s.on = vb(ID::sq(n, ID::seqOn)); s.retrig = vb(ID::sq(n, ID::seqRetrig));
     s.rateIdx = vi(ID::sq(n, ID::seqRate)); s.dir = vi(ID::sq(n, ID::seqDir));
     s.swing = v(ID::sq(n, ID::seqSwing)); s.gateScale = v(ID::sq(n, ID::seqGate));
+    s.scale = n == 0 ? vi(ID::seqScale) : 0;
     if (! s.on) return;                                  // step data is only needed while running
     const bool link = vb(ID::sq(n, ID::seqLink));
     s.len[0] = vi(ID::sq(n, ID::seqLenG));
